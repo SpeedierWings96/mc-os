@@ -239,6 +239,7 @@ local function loadApps()
   apps = {
     { name = "Shell", path = "/rom/programs/shell.lua", desktop = true },
     { name = "Files", path = fs.combine(base, "apps/files.lua"), desktop = true },
+    { name = "Mac", path = fs.combine(base, "apps/mac.lua"), desktop = true },
     { name = "Lua", path = "/rom/programs/lua.lua" },
     { name = "Worm", path = "/rom/programs/fun/worm.lua" },
     { name = "Settings", path = fs.combine(base, "apps/settings.lua"), desktop = true },

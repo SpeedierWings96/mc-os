@@ -6,6 +6,8 @@ import os
 import shutil
 import sys
 import tempfile
+import threading
+import urllib.error
 import urllib.request
 
 try:
@@ -15,6 +17,8 @@ except ImportError:
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
+sys.path.insert(0, os.path.join(REPO, "bridge"))
+import mac_bridge  # noqa: E402
 ROM = os.path.join(HERE, ".rom")
 ROM_URL = ("https://raw.githubusercontent.com/cc-tweaked/CC-Tweaked/mc-1.20.x/"
            "projects/core/src/main/resources/data/computercraft/lua/rom/")
@@ -52,14 +56,37 @@ class HostFS:
             os.remove(p)
 
 
-def boot(root):
+class HostHTTP:
+    def request(self, method, url, body, token):
+        req = urllib.request.Request(url, method=method, headers={"X-Token": token},
+                                     data=body.encode() if method == "POST" else None)
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                return resp.status, resp.read().decode(), ""
+        except urllib.error.HTTPError as e:
+            return e.code, e.read().decode(), "HTTP response code %d" % e.code
+        except OSError as e:
+            return 0, "", str(e)
+
+
+def start_bridge(app_dir, token, opened):
+    handler = mac_bridge.make_handler(token, [app_dir], opened.append)
+    server = mac_bridge.http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
+def boot(root, bridge_url=None):
     lua = lupa.LuaRuntime(unpack_returned_tuples=True)
     g = lua.globals()
     g.HOST_ROM = ROM
     g.HOST_ROOT = root
     g.HOST_FS = HostFS()
+    g.HOST_HTTP = HostHTTP()
     with open(os.path.join(HERE, "harness.lua")) as fh:
         h = lua.execute(fh.read())
+    if bridge_url:
+        lua.execute('settings.set("mcos.bridge.url", ...)', bridge_url)
     h.boot()
     return h
 
@@ -189,6 +216,38 @@ def main():
         h.key("down")
     h.key("enter")
     check("e" in h.bgLine(2)[:1], "picking red changes the desktop", h)
+
+    print("mac bridge:")
+    app_dir = tempfile.mkdtemp()
+    for name in ["Safari.app", "Notes.app", "Visual Studio Code.app", "notes.txt"]:
+        os.makedirs(os.path.join(app_dir, name))
+    opened = []
+    server = start_bridge(app_dir, "abc123", opened)
+    base = "http://127.0.0.1:%d" % server.server_address[1]
+
+    def call(method, path, token, body=None):
+        return HostHTTP().request(method, base + path, body or "", token)
+
+    check(call("GET", "/apps", "abc123")[1] == "Notes\nSafari\nVisual Studio Code", "bridge lists only .app bundles")
+    check(call("GET", "/apps", "wrong")[0] == 403, "bridge rejects a wrong token")
+    check(call("POST", "/open", "abc123", "../../bin/sh")[0] == 404 and not opened,
+          "bridge refuses anything that isn't a listed app")
+
+    h = boot(root, base)
+    x, y = find(h, " Mac ")
+    h.click(x + 1, y)
+    check(find(h, "Token:") is not None, "Mac app asks for the token first", h)
+    h.type("abc123")
+    h.key("enter")
+    check(find(h, "Visual Studio Code") is not None, "Mac app lists the Mac's apps", h)
+    h.type("saf")
+    check(find(h, "Notes") is None and find(h, "Safari") is not None, "typing filters the list", h)
+    h.key("enter")
+    check(opened == [os.path.join(app_dir, "Safari.app")], "Enter opens the app on the Mac", h)
+    check(find(h, "Opened Safari") is not None, "Mac app confirms it opened", h)
+    server.shutdown()
+    h.click(*find(h, "[Reload]"))
+    check(find(h, "Can't reach your Mac") is not None, "Mac app explains when the bridge is down", h)
 
     print("exit:")
     h.click(2, 19)

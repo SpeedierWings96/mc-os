@@ -195,6 +195,26 @@ settings = {
 
 _HOST = "MC-OS headless harness"
 
+-- HTTP goes through the host (HOST_HTTP.request) so tests can talk to a
+-- real bridge server. Mirrors CC's http.get/http.post return values.
+if HOST_HTTP then
+  local function request(method, url, body, hdrs)
+    local code, text, err = HOST_HTTP.request(method, url, body or "", hdrs and hdrs["X-Token"] or "")
+    if code == 0 then return nil, err end
+    local handle = {
+      readAll = function() return text end,
+      getResponseCode = function() return code end,
+      close = function() end,
+    }
+    if code >= 400 then return nil, err, handle end
+    return handle
+  end
+  http = {
+    get = function(url, hdrs) return request("GET", url, nil, hdrs) end,
+    post = function(url, body, hdrs) return request("POST", url, body, hdrs) end,
+  }
+end
+
 local nextTimer, timers = 1, {}
 local clock = 0
 os.pullEventRaw = coroutine.yield
