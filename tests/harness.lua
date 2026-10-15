@@ -179,6 +179,9 @@ keys = loadAPI("rom/apis/keys.lua")
 window = loadAPI("rom/apis/window.lua")
 
 textutils = {
+  urlEncode = function(s)
+    return (s:gsub("[^%w%-_%.~]", function(c) return string.format("%%%02X", c:byte()) end))
+  end,
   formatTime = function(t, twentyFour)
     local h = math.floor(t)
     local m = math.floor((t - h) * 60)
@@ -194,6 +197,15 @@ settings = {
 }
 
 _HOST = "MC-OS headless harness"
+
+-- No monitors attached.
+peripheral = {
+  find = function() return nil end,
+  getName = function() return nil end,
+}
+
+local eventQueue = {}
+function os.queueEvent(...) table.insert(eventQueue, table.pack(...)) end
 
 -- HTTP goes through the host (HOST_HTTP.request) so tests can talk to a
 -- real bridge server. Mirrors CC's http.get/http.post return values.
@@ -212,6 +224,16 @@ if HOST_HTTP then
   http = {
     get = function(url, hdrs) return request("GET", url, nil, hdrs) end,
     post = function(url, body, hdrs) return request("POST", url, body, hdrs) end,
+    -- Async: answers with an http_success/http_failure event.
+    request = function(url, body, hdrs)
+      local ok, err, failed = request(body and "POST" or "GET", url, body, hdrs)
+      if ok then
+        os.queueEvent("http_success", url, ok)
+      else
+        os.queueEvent("http_failure", url, err, failed)
+      end
+      return true
+    end,
   }
 end
 
@@ -301,13 +323,25 @@ local main = coroutine.create(function() shell.run("startup.lua") end)
 local filter
 
 local harness = {}
-function harness.send(...)
-  if coroutine.status(main) == "dead" then return false end
+local function deliver(...)
+  if coroutine.status(main) == "dead" then return end
   local ev = ...
-  if filter ~= nil and filter ~= ev and ev ~= "terminate" then return true end
+  if filter ~= nil and filter ~= ev and ev ~= "terminate" then return end
   local ok, res = coroutine.resume(main, ...)
   if not ok then error(res, 0) end
   filter = res
+end
+
+-- Deliver an event, then up to 20 events queued while handling it (capped
+-- because a viewer requests frames forever).
+function harness.send(...)
+  deliver(...)
+  local budget = 20
+  while #eventQueue > 0 and budget > 0 do
+    budget = budget - 1
+    local ev = table.remove(eventQueue, 1)
+    deliver(table.unpack(ev, 1, ev.n))
+  end
   return coroutine.status(main) ~= "dead"
 end
 function harness.fireTimers()
@@ -322,8 +356,10 @@ function harness.boot()
   harness.send()
   for _ = 1, 40 do harness.fireTimers() end
 end
-function harness.screen() return table.concat(text, "\n") end
-function harness.line(y) return text[y] end
+-- Drawing characters (128+) show as "#" so Python sees plain text.
+local function plain(s) return (s:gsub("[\128-\255]", "#")) end
+function harness.screen() return plain(table.concat(text, "\n")) end
+function harness.line(y) return plain(text[y]) end
 function harness.fgLine(y) return fgs[y] end
 function harness.bgLine(y) return bgs[y] end
 function harness.alive() return coroutine.status(main) ~= "dead" end

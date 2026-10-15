@@ -220,6 +220,8 @@ api = {
     return wm.launch({ path = "/rom/programs/edit.lua", args = { path, n = 1 }, title = fs.getName(path) })
   end,
   apps = function() return apps end,
+  -- Absolute path of a file inside the MC-OS folder.
+  path = function(rel) return "/" .. fs.combine(base, rel) end,
   close = function() if current then kill(current) end end,
 }
 

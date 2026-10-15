@@ -13,6 +13,7 @@ local files = {
   "mcos/apps/settings.lua",
   "mcos/apps/about.lua",
   "mcos/apps/mac.lua",
+  "mcos/apps/macview.lua",
 }
 
 if not http then

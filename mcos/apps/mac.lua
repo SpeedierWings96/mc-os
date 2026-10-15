@@ -1,5 +1,5 @@
--- Mac: open apps on your real Mac through bridge/mac_bridge.py.
--- Type to search, Enter or double-click to open.
+-- Mac: open apps on your real Mac through bridge/mac_bridge.py and show
+-- them in game. Type to search, Enter or double-click to open.
 
 local url = settings.get("mcos.bridge.url", "http://127.0.0.1:8765")
 local apps, shown = {}, {}
@@ -77,15 +77,10 @@ local function reload()
   setFilter(filter)
 end
 
+-- Opens the app on the Mac and shows it in a viewer window (or on an
+-- attached monitor).
 local function open(name)
-  local response, err, failed = http.post(url .. "/open", name, headers())
-  if response then
-    response.close()
-    status, statusColour = "Opened " .. name .. " on your Mac", colors.lime
-  else
-    if failed then failed.close() end
-    status, statusColour = "Couldn't open " .. name .. ": " .. tostring(err), colors.orange
-  end
+  mcos.launch(mcos.path("apps/macview.lua"), name)
 end
 
 local function rows()

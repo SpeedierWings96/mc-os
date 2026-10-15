@@ -32,21 +32,24 @@ The server needs CC:Tweaked's HTTP API enabled (it is by default), and the repos
 | Files | Browse folders. Enter or double-click opens; `.lua` files run, other files open in the editor. `N` new file, `M` new folder, `E` edit, `D` delete. |
 | Lua | The Lua prompt. |
 | Worm | The built-in snake game. |
-| Mac | Lists the apps on your real Mac and opens them there. Needs the Mac bridge below. |
+| Mac | Lists the apps on your real Mac and shows the one you pick live in game, on a monitor if one is attached. Needs the Mac bridge below. |
 | Settings | Desktop background colour. |
 | About | Version and computer details. |
 
 Any program you put in `/apps` appears in the start menu.
 
-Programs run inside MC-OS get an `mcos` table: `mcos.launch(path, ...)` opens a program in a new window, `mcos.edit(path)` opens a file in the editor, and `mcos.version` is the OS version.
+Programs run inside MC-OS get an `mcos` table: `mcos.launch(path, ...)` opens a program in a new window, `mcos.edit(path)` opens a file in the editor, `mcos.path(rel)` gives the absolute path of a file in the MC-OS folder, and `mcos.version` is the OS version.
 The standard `multishell` API also works, so existing programs that open tabs open windows instead.
 
-## Opening apps on your Mac
+## Mac apps in Minecraft
 
-The Mac app talks to a small helper, `bridge/mac_bridge.py`, that runs on the Mac where you play Minecraft.
+The Mac app opens an app on your real Mac and shows its window live in game.
+You can click it (touch the monitor, or click the viewer window) and type into it.
+It talks to a small helper, `bridge/mac_bridge.py`, that runs on the Mac where you play Minecraft.
 
-1. Download [`bridge/mac_bridge.py`](bridge/mac_bridge.py) and run it in Terminal: `python3 mac_bridge.py`.
+1. Download [`bridge/mac_bridge.py`](bridge/mac_bridge.py) and run it in Terminal: `python3 mac_bridge.py`. If macOS offers to install developer tools, accept; that is where `python3` comes from.
    It prints a token; keep the window open while you play.
+   The first time you show an app, macOS asks to give Terminal **Screen Recording** (to see the app) and **Accessibility** (to click and type into it), in System Settings > Privacy & Security. Allow both, then restart the bridge.
 2. Let CC:Tweaked reach your own Mac. It blocks local addresses by default.
    Open `computercraft-server.toml` (in your world's `serverconfig` folder, or in `.minecraft/config` on Fabric) and add this rule **above** the existing `$private` deny rule, then restart the world:
 
@@ -55,9 +58,13 @@ The Mac app talks to a small helper, `bridge/mac_bridge.py`, that runs on the Ma
        host = "127.0.0.1"
        action = "allow"
    ```
-3. In MC-OS, open **Mac**, type the token, then type to search and press Enter (or double-click) to open an app.
+3. For a big screen, place Advanced Monitors (up to 8 wide by 6 tall) next to the computer. Without a monitor the app shows in a window on the computer.
+4. In MC-OS, open **Mac**, type the token, then type to search and press Enter (or double-click) to open an app.
 
-The bridge only listens on your Mac, needs the token, and only opens `.app` bundles from your Applications folders; it never runs commands sent from the game.
+The picture updates a few times a second and is limited to 16 colours, so text is readable on a large monitor but small on the computer screen.
+Clicks and typing go straight to that app even while Minecraft is in front; a few apps ignore input they get while in the background.
+
+The bridge only listens on your Mac, needs the token, and only opens, shows and controls `.app` bundles from your Applications folders; it never runs commands sent from the game.
 If Minecraft runs on a different computer, start the bridge with `--host 0.0.0.0`, allow that address instead, and point MC-OS at it from the Shell: `set mcos.bridge.url http://<mac-ip>:8765`.
 
 ## Layout
@@ -68,7 +75,7 @@ startup.lua          boots MC-OS
 mcos/boot.lua        splash screen, then starts the window manager
 mcos/wm.lua          window manager, desktop, taskbar, start menu
 mcos/apps/*.lua      built-in apps
-bridge/mac_bridge.py helper that runs on your Mac for the Mac app
+bridge/mac_bridge.py helper that runs on your Mac: opens, captures and controls apps
 tests/               headless test run
 ```
 

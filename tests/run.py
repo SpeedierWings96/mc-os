@@ -4,6 +4,7 @@
 """
 import os
 import shutil
+import struct
 import sys
 import tempfile
 import threading
@@ -69,8 +70,54 @@ class HostHTTP:
             return 0, "", str(e)
 
 
-def start_bridge(app_dir, token, opened):
-    handler = mac_bridge.make_handler(token, [app_dir], opened.append)
+class FakeScreen:
+    """Stands in for MacScreen: a 200x100 window, red on the left half and
+    blue on the right, that records the input it receives."""
+
+    def __init__(self):
+        self.events = []
+
+    def find_window(self, app_path):
+        return {"id": 1, "pid": 2, "x": 0, "y": 0, "w": 200, "h": 100}
+
+    def capture(self, win, width, height):
+        red, blue = (0xCC, 0x4C, 0x4C), (0x33, 0x66, 0xCC)
+        return [[red if x < width // 2 else blue for x in range(width)] for _ in range(height)]
+
+    def click(self, win, fx, fy):
+        self.events.append(("click", round(fx, 1), round(fy, 1)))
+
+    def scroll(self, win, fx, fy, amount):
+        self.events.append(("scroll", amount))
+
+    def type_text(self, win, text):
+        self.events.append(("type", text))
+
+    def key(self, win, name):
+        self.events.append(("key", name))
+
+
+def bmp(rows, bpp, top_down):
+    """Build a BMP the way sips might: 24-bit, or 32-bit with bitfields."""
+    h, w = len(rows), len(rows[0])
+    step = bpp // 8
+    stride = (w * step + 3) & ~3
+    pixels = b""
+    for row in (rows if top_down else reversed(rows)):
+        line = b""
+        for r, g, b in row:
+            line += bytes([b, g, r]) if bpp == 24 else struct.pack("<I", 0xFF000000 | r << 16 | g << 8 | b)
+        pixels += line + b"\0" * (stride - len(line))
+    extra = struct.pack("<III", 0xFF0000, 0xFF00, 0xFF) if bpp == 32 else b""
+    offset = 14 + 40 + len(extra)
+    header = struct.pack("<2sIHHI", b"BM", offset + len(pixels), 0, 0, offset)
+    info = struct.pack("<IiiHHIIiiII", 40, w, -h if top_down else h, 1, bpp,
+                       3 if bpp == 32 else 0, len(pixels), 0, 0, 0, 0)
+    return header + info + extra + pixels
+
+
+def start_bridge(app_dir, token, opened, screen=None):
+    handler = mac_bridge.make_handler(token, [app_dir], opened.append, screen)
     server = mac_bridge.http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server
@@ -222,7 +269,8 @@ def main():
     for name in ["Safari.app", "Notes.app", "Visual Studio Code.app", "notes.txt"]:
         os.makedirs(os.path.join(app_dir, name))
     opened = []
-    server = start_bridge(app_dir, "abc123", opened)
+    screen = FakeScreen()
+    server = start_bridge(app_dir, "abc123", opened, screen)
     base = "http://127.0.0.1:%d" % server.server_address[1]
 
     def call(method, path, token, body=None):
@@ -244,10 +292,35 @@ def main():
     check(find(h, "Notes") is None and find(h, "Safari") is not None, "typing filters the list", h)
     h.key("enter")
     check(opened == [os.path.join(app_dir, "Safari.app")], "Enter opens the app on the Mac", h)
-    check(find(h, "Opened Safari") is not None, "Mac app confirms it opened", h)
+    view = title_row(h, "Safari")
+    check(view is not None, "opening an app shows it in a viewer window", h)
+    vx, vy = view
+    row = h.bgLine(vy + 6)[vx - 1:vx + 37]
+    inner = row.strip("f")  # letterbox bars are black
+    check(inner.startswith("e") and inner.endswith("b") and set(inner) <= set("eb"),
+          "viewer draws the app's window (red | blue)", h)
+    h.click(vx + 18, vy + 6)
+    check(("click", 0.5, 0.5) in screen.events, "clicking the viewer clicks the app", h)
+    h.type("hi")
+    h.key("enter")
+    check(("type", "h") in screen.events and ("key", "enter") in screen.events,
+          "typing in the viewer types into the app", h)
+
     server.shutdown()
+    mac = title_row(h, "Mac")
+    h.click(mac[0] + 2, mac[1])  # focus the Mac app window
     h.click(*find(h, "[Reload]"))
     check(find(h, "Can't reach your Mac") is not None, "Mac app explains when the bridge is down", h)
+
+    print("frame encoding:")
+    rows = [[(10 * x, 20 * y, 5) for x in range(5)] for y in range(3)]
+    check(mac_bridge.read_bmp(bmp(rows, 24, False)) == rows, "reads 24-bit bottom-up BMP")
+    check(mac_bridge.read_bmp(bmp(rows, 32, True)) == rows, "reads 32-bit top-down bitfield BMP")
+    check(mac_bridge.fit(200, 100, 10, 10) == (0, 10, 20, 10), "letterboxes a wide window")
+    # A 2x3 cell, white with a black top-left pixel, in the fixed palette.
+    img = [[(0, 0, 0), (255, 255, 255)], [(255, 255, 255)] * 2, [(255, 255, 255)] * 2]
+    frame = mac_bridge.encode_frame(img, 1, 1, False).split("\n")
+    check(frame[2:5] == ["1", "f", "0"], "encodes a cell as a teletext character")
 
     print("exit:")
     h.click(2, 19)
